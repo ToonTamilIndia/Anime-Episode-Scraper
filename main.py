@@ -5,7 +5,7 @@ import concurrent.futures
 import os
 from tqdm import tqdm
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, urlencode
 import base64
 import sys
 from colorama import Fore, Style, init
@@ -36,9 +36,9 @@ RESET = Style.RESET_ALL
 
 def print_header():
 
-    print(f"\n{CYAN}{'=' * 80}")
-    print(f"Toonstream, AnimeDekho, HindiAnimeVerse, AniTown4u, HindiSubAnime Scraper".center(80))
-    print(f"{'=' * 80}{RESET}")
+    print(f"\n{CYAN}{'=' * 90}")
+    print(f"Toonstream, AnimeDekho, HindiAnimeVerse, AniTown4u, WatchAnimeWorld, ToonsHub, HindiSubAnime Scraper".center(90))
+    print(f"{'=' * 90}{RESET}")
     print(f"{YELLOW}Version: {VERSION}{RESET}")
 
 def retry(max_retries: int = MAX_RETRIES, delay: int = RETRY_DELAY):
@@ -187,7 +187,7 @@ class Scraper:
             return results
 
         except Exception as e:
-            print(f"{RED}Generic scrape error: {e}{RESET}")
+            print(f"{RED}anime4u scrape error: {e}{RESET}")
             return []
     
         
@@ -260,9 +260,42 @@ class Scraper:
                                 "Url": embed_url
                             })
             return results
+        
         except Exception as e:
             print(f"{RED}HindiAnimeverse error: {e}{RESET}")
             return []
+        
+    def extract_toonshub_details(self, url: str) -> List[Dict[str, str]]:
+        soup = self.fetch_page(url)
+        result = []
+
+    
+        cards = soup.find_all("div", class_="card")
+
+        for card in cards:
+            resolution_tag = card.find("h5")
+            if not resolution_tag:
+                continue
+            resolution = resolution_tag.text.strip()
+
+
+            for a_tag in card.find_all("a", href=True):
+                href = a_tag['href']
+                provider_name = a_tag.text.strip()
+
+                if "/redirect/?url=" not in href:
+                    continue
+
+
+
+                result.append({
+                    resolution: {
+                        "Provider": provider_name,
+                        "Url": "https://links.toonshub.xyz" + href
+                    }
+                })
+
+        return result
 
     def scrape_generic(self, url: str) -> List[Dict[str, str]]:
 
@@ -275,10 +308,23 @@ class Scraper:
             for iframe in soup.select("iframe[data-src]"):
                 try:
                     src = iframe["data-src"]
-                    iframe_soup = self.fetch_page(src)
-                    if nested_iframe := iframe_soup.select_one("iframe[src]"):
-                        host = urlparse(nested_iframe["src"]).netloc
-                        iframes.append({"Provider Host": host, "Url": nested_iframe["src"]})
+
+                    is_pixfusion = False
+                    
+                    if "pixfusion.in" in src:
+                        is_pixfusion = True
+                        iframes.append({
+                            "Provider Host": "pixfusion.in",
+                            "Referer": "https://watchanimeworld.in/",
+                            "Url": src
+                        })
+                    
+                    if not is_pixfusion:
+                        iframe_soup = self.fetch_page(src)
+                        nested_iframe = iframe_soup.select_one("iframe[src]")
+                        if nested_iframe:
+                            host = urlparse(nested_iframe["src"]).netloc
+                            iframes.append({"Provider Host": host, "Url": nested_iframe["src"]})
                 except Exception as e:
                     print(f"{YELLOW}Skipping iframe: {e}{RESET}")
 
@@ -303,6 +349,12 @@ class Scraper:
                 details = self.extract_hindianimeverse_details(url)
                 title = self.extract_title(url, " | Hindi Anime Verse")
                 title = title.replace("Watch & Download ", "").replace(" Free", "").strip()
+            elif "watchanimeworld" in url:
+                details = self.scrape_generic(url)
+                title = self.extract_title(url, " - Anime World India - Best Source For Hindi, Tamil, Telugu Anime & Cartoons - Anime World India")
+            elif "toonshub" in url:
+                details = self.extract_toonshub_details(url)
+                title = self.extract_title(url, " – ToonsHub")
             else:
                 details = self.scrape_generic(url)
                 title = self.extract_title(url, " - Toonstream")
@@ -337,22 +389,29 @@ def validate_url(url: str) -> bool:
     
     parsed = urlparse(url)
     return all([parsed.scheme, parsed.netloc]) and any(
-        domain in parsed.netloc for domain in ["toonstream", "animedekho", "hindisubanime", "anitown4u", "hindianimeverse"]
+        domain in parsed.netloc for domain in ["toonstream", "animedekho", "hindisubanime", "anitown4u", "hindianimeverse", "watchanimeworld", "toonshub"]
     )
 
 def generate_episode_urls(base_url: str, seasons: Dict[int, int]) -> List[Tuple[str, int, int]]:
     
     urls = []
-    base_slug = re.search(r"(.+-\d+x)\d+$", base_url)
+    
+    if "toonshub" in base_url:
+        base_slug = re.search(r"/episode/([^/]+)/\d+x\d+$", base_url)
+    else:
+        base_slug = re.search(r"(.+-\d+x)\d+$", base_url)
     if not base_slug:
         print(f"{RED}Invalid episode URL format{RESET}")
         sys.exit(1)
 
-    slug_prefix = base_slug.group(1)
     
     for season, episodes in seasons.items():
         for ep in range(1, episodes + 1):
-            episode_url = f"{base_url.rsplit('-', 1)[0]}-{season}x{ep}"
+            if "toonshub" in base_url:
+                episode_url = f"https://links.toonshub.xyz/episode/{base_slug.group(1)}/{season}x{ep}"
+            else:
+                
+                episode_url = f"{base_url.rsplit('-', 1)[0]}-{season}x{ep}"
             urls.append((episode_url, season, ep))
     
     return urls
@@ -384,7 +443,7 @@ def main():
     
     base_url = input(f"{CYAN}Enter episode 1 URL: {RESET}").strip()
     while not validate_url(base_url):
-        print(f"{RED}Invalid URL format - must be ToonStream, AniTown4u, HindiSubAnime, HindiAnimeverse or AnimeDekho{RESET}")
+        print(f"{RED}Invalid URL format - must be ToonStream, AniTown4u, HindiSubAnime, ToonsHub, WatchAnimeWorld, HindiAnimeverse or AnimeDekho{RESET}")
         base_url = input(f"{CYAN}Enter episode 1 URL: {RESET}").strip()
 
     base_url = base_url[:-1] if base_url.endswith("/") else base_url
