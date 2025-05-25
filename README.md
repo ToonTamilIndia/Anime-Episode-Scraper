@@ -7,6 +7,8 @@ A robust Python scraper that collects streaming links and metadata for anime epi
 * AniTown4u
 * HindiSubAnime
 * HindiAnimeVerse
+* WatchAnimeWorld
+* ToonsHub
 
 Supports optional TMDB integration for retrieving official episode titles.
 
