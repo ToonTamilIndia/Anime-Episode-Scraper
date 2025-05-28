@@ -14,7 +14,7 @@ import time
 import getpass
 from typing import Dict, List, Optional, Tuple
 import random
-
+import shutil
 
 init()
 
@@ -35,11 +35,18 @@ CYAN = Fore.CYAN
 RESET = Style.RESET_ALL
 
 def print_header():
+    width = shutil.get_terminal_size((80, 20)).columns
+    title = "Toonstream, AnimeDekho, HindiAnimeVerse, AniTown4u, WatchAnimeWorld, ToonsHub, TamilToon, HindiSubAnime Scraper"
+    
+    border = f"{CYAN}{'╔' + '═' * (width - 2) + '╗'}{RESET}"
+    separator = f"{CYAN}{'╟' + '─' * (width - 2) + '╢'}{RESET}"
+    footer = f"{CYAN}{'╚' + '═' * (width - 2) + '╝'}{RESET}"
 
-    print(f"\n{CYAN}{'=' * 90}")
-    print(f"Toonstream, AnimeDekho, HindiAnimeVerse, AniTown4u, WatchAnimeWorld, ToonsHub, HindiSubAnime Scraper".center(90))
-    print(f"{'=' * 90}{RESET}")
-    print(f"{YELLOW}Version: {VERSION}{RESET}")
+    print(f"\n{border}")
+    print(f"{CYAN}║{title.center(width - 2)}║{RESET}")
+    print(f"{separator}")
+    print(f"{CYAN}║{f'Version: {VERSION}'.center(width - 2)}║{RESET}")
+    print(f"{footer}")
 
 def retry(max_retries: int = MAX_RETRIES, delay: int = RETRY_DELAY):
     def decorator(func):
@@ -117,6 +124,24 @@ class Scraper:
     @retry()
     def fetch_page(self, url: str) -> Optional[BeautifulSoup]:
         try:
+            if "tamiltoon" in url:
+                
+                config = load_config()
+                zenrows_api_key = config.get("zenrows_api_key")
+                if not zenrows_api_key:
+                    print(f"{YELLOW}Cloudflare protection detected, using Zenrows for scraping.{RESET}")
+                    zenrows_api_key = config.get("zenrows_api_key") or getpass.getpass(f"{CYAN}Zenrows API key: {RESET}")
+                    config["zenrows_api_key"] = zenrows_api_key
+                    save_config(config)
+                from zenrows import ZenRowsClient
+                params = {"js_render": "true"}
+                client = ZenRowsClient(zenrows_api_key)
+                response = client.get(
+                    url,
+                    params=params
+                )
+                response.raise_for_status()
+                return BeautifulSoup(response.content, "html.parser")
             response = self.session.get(url, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             return BeautifulSoup(response.content, "html.parser")
@@ -336,6 +361,9 @@ class Scraper:
     def get_episode_data(self, url: str) -> Optional[Dict]:
 
         try:
+            if "tamiltoon" in url:
+                details = self.scrape_generic(url)
+                title = self.extract_title(url, " - TamilToon")
             if "animedekho" in url:
                 details = self.extract_animedekho_details(url)
                 title = self.extract_title(url, " - AnimeDekho")
@@ -389,7 +417,7 @@ def validate_url(url: str) -> bool:
     
     parsed = urlparse(url)
     return all([parsed.scheme, parsed.netloc]) and any(
-        domain in parsed.netloc for domain in ["toonstream", "animedekho", "hindisubanime", "anitown4u", "hindianimeverse", "watchanimeworld", "toonshub"]
+        domain in parsed.netloc for domain in ["toonstream", "animedekho", "hindisubanime", "anitown4u", "hindianimeverse", "watchanimeworld", "toonshub", "tamiltoon", "hindianimeverse"]
     )
 
 def generate_episode_urls(base_url: str, seasons: Dict[int, int]) -> List[Tuple[str, int, int]]:
@@ -443,7 +471,7 @@ def main():
     
     base_url = input(f"{CYAN}Enter episode 1 URL: {RESET}").strip()
     while not validate_url(base_url):
-        print(f"{RED}Invalid URL format - must be ToonStream, AniTown4u, HindiSubAnime, ToonsHub, WatchAnimeWorld, HindiAnimeverse or AnimeDekho{RESET}")
+        print(f"{RED}Invalid URL format - must be ToonStream, AniTown4u, HindiSubAnime, ToonsHub, TamilToon, WatchAnimeWorld, HindiAnimeverse or AnimeDekho{RESET}")
         base_url = input(f"{CYAN}Enter episode 1 URL: {RESET}").strip()
 
     base_url = base_url[:-1] if base_url.endswith("/") else base_url
