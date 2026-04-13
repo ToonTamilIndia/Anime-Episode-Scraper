@@ -13,7 +13,6 @@ from functools import wraps
 import time
 import getpass
 from typing import Dict, List, Optional, Tuple
-import random
 import shutil
 
 init()
@@ -27,6 +26,12 @@ REQUEST_TIMEOUT = 15
 MAX_RETRIES = 3
 RETRY_DELAY = 1
 
+KNOWN_PROVIDERS = {
+    "short.icu": "HydraX",
+    "emturbovid.com": "Omega",
+    
+}
+
 
 GREEN = Fore.GREEN
 YELLOW = Fore.YELLOW
@@ -36,7 +41,7 @@ RESET = Style.RESET_ALL
 
 def print_header():
     width = shutil.get_terminal_size((80, 20)).columns
-    title = "Toonstream, AnimeDekho, HindiAnimeVerse, AniTown4u, WatchAnimeWorld, ToonsHub, TamilToon, HindiSubAnime Scraper"
+    title = "Toonstream, AnimeDekho, HindiAnimeVerse, WatchAnimeWorld, ToonsHub, HindiSubAnime Scraper"
     
     border = f"{CYAN}{'╔' + '═' * (width - 2) + '╗'}{RESET}"
     separator = f"{CYAN}{'╟' + '─' * (width - 2) + '╢'}{RESET}"
@@ -74,6 +79,18 @@ def decode_embed_id(embed_id: str) -> str:
     except Exception as e:
         print(f"Error decoding embed id: {e}")
     return ""
+
+
+def get_provider_name(stream_url: str) -> str:
+    netloc = urlparse(stream_url).netloc.lower()
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+
+    for domain, provider in KNOWN_PROVIDERS.items():
+        if netloc == domain or netloc.endswith(f".{domain}"):
+            return provider
+
+    return netloc.split('.')[0].capitalize() if netloc else "Unknown"
 
 class TMDBClient:
     def __init__(self, api_key: str):
@@ -124,24 +141,6 @@ class Scraper:
     @retry()
     def fetch_page(self, url: str) -> Optional[BeautifulSoup]:
         try:
-            if "tamiltoon" in url:
-                
-                config = load_config()
-                zenrows_api_key = config.get("zenrows_api_key")
-                if not zenrows_api_key:
-                    print(f"{YELLOW}Cloudflare protection detected, using Zenrows for scraping.{RESET}")
-                    zenrows_api_key = config.get("zenrows_api_key") or getpass.getpass(f"{CYAN}Zenrows API key: {RESET}")
-                    config["zenrows_api_key"] = zenrows_api_key
-                    save_config(config)
-                from zenrows import ZenRowsClient
-                params = {"js_render": "true"}
-                client = ZenRowsClient(zenrows_api_key)
-                response = client.get(
-                    url,
-                    params=params
-                )
-                response.raise_for_status()
-                return BeautifulSoup(response.content, "html.parser")
             response = self.session.get(url, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             return BeautifulSoup(response.content, "html.parser")
@@ -166,16 +165,28 @@ class Scraper:
             results = []
             
  
-            for i in range(5):
+            for i in range(11):
                 try:
-                    dynamic_url = f"https://animedekho.co/?trdekho={i}&trid={term}&trtype=2"
+                    dynamic_url = f"https://animedekho.app/?trdekho={i}&trid={term}&trtype=2"
                     iframe_soup = self.fetch_page(dynamic_url)
                     if iframe := iframe_soup.select_one("iframe[src]"):
                         src = iframe["src"]
-                        results.append({
-                            "Provider Host": urlparse(src).netloc,
-                            "Url": src
-                        })
+                        if src!="":
+                            if src.startswith("https://animedekho.app/aaa/ad/vidsrc"):
+                                results.append({
+                                "Provider Host": "VidSrc",
+                                "Url": src
+                            })
+                            elif src.startswith("https://animedekho.app/aaa/ad/beta"):
+                                 results.append({
+                                "Provider Host": "BETA",
+                                "Url": src
+                            })
+                            else:
+                                results.append({
+                                    "Provider": get_provider_name(src),
+                                    "Url": src
+                                })
                 except Exception as e:
                     continue
 
@@ -183,41 +194,6 @@ class Scraper:
         except Exception as e:
             print(f"{RED}Animedekho error: {e}{RESET}")
             return []
-    def extract_anime4u_details(self, url: str) -> List[Dict[str, str]]:
-        try:
-            soup = self.fetch_page(url)
-            if not soup:
-                return []
-
-            results = []
-
-            player_spans = soup.select("div.player-selection span[data-dub-name][data-embed-id]")
-            for span in player_spans:
-                try:
-                    provider = span["data-dub-name"].strip()
-                    embed_id = span["data-embed-id"]
-                    base_urls = [
-                    "https://anitown4u.com",
-                    "https://app-123.anitown4u.com"
-                ]
-                    stream_url = random.choice(base_urls) + decode_embed_id(embed_id)
-                    if stream_url:
-                        results.append({
-                            "Provider Host": provider,
-                            "Url": stream_url
-                        })
-                except Exception as e:
-                    print(f"{YELLOW}Skipping player span: {e}{RESET}")
-
-            return results
-
-        except Exception as e:
-            print(f"{RED}anime4u scrape error: {e}{RESET}")
-            return []
-    
-        
-        
-    
     def extract_hindisubanime_details(self, url: str) -> List[Dict[str, str]]:
  
         try:
@@ -236,16 +212,17 @@ class Scraper:
             results = []
             
  
-            for i in range(5):
+            for i in range(11):
                 try:
                     dynamic_url = f"https://hindisubanime.co/?trdekho={i}&trid={term}&trtype=2"
                     iframe_soup = self.fetch_page(dynamic_url)
                     if iframe := iframe_soup.select_one("iframe[src]"):
                         src = iframe["src"]
-                        results.append({
-                            "Provider Host": urlparse(src).netloc,
-                            "Url": src
-                        })
+                        if src!="":
+                            results.append({
+                                "Provider": get_provider_name(src),
+                                "Url": src
+                            })
                 except Exception as e:
                     continue
 
@@ -256,34 +233,173 @@ class Scraper:
     def extract_hindianimeverse_details(self, url: str) -> List[Dict[str, str]]:
  
         try:
-            
             soup = self.fetch_page(url)
             if not soup:
                 return []
-            player_options = soup.find_all('li', class_='dooplay_player_option')
+
+            post_id = None
+            if postid_input := soup.select_one("input[name='postid'][value]"):
+                post_id = postid_input.get("value", "").strip()
+
+            if not post_id and (body := soup.select_one("body")):
+                body_class = " ".join(body.get("class", []))
+                body_match = re.search(r"postid-(\d+)", body_class)
+                if body_match:
+                    post_id = body_match.group(1)
+
+            if not post_id and (counter_meta := soup.select_one("meta#dooplay-ajax-counter[data-postid]")):
+                post_id = counter_meta.get("data-postid", "").strip()
+
+            if article := soup.select_one("article[id^='post-']"):
+                post_id = post_id or article.get("id", "").replace("post-", "").strip()
+
+            if not post_id and (with_data_post := soup.select_one("[data-post]")):
+                post_id = with_data_post.get("data-post", "").strip()
+
+            if not post_id:
+                html = str(soup)
+                match = re.search(r'"post_id"\s*:\s*"?(\d+)"?', html)
+                if not match:
+                    match = re.search(r'\bpost[-_ ]?id\b[^\d]{0,20}(\d+)', html, re.IGNORECASE)
+                if not match:
+                    match = re.search(r'/\?p=(\d+)', html)
+                post_id = match.group(1) if match else ""
+
+            if not post_id:
+                print(f"{YELLOW}HindiAnimeVerse post_id not found for {url}{RESET}")
+                return []
+
+            ajax_url = "https://hindianimeverse.org/wp-admin/admin-ajax.php"
+            ajax_headers = {
+                "Accept": "*/*",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "https://hindianimeverse.org",
+                "Referer": url,
+                "User-Agent": self.session.headers.get("User-Agent", "Mozilla/5.0")
+            }
+
+            dl_fetch_payload = {
+                "action": "dl_fetch_api",
+                "post_id": post_id
+            }
+            
+
+            r = self.session.post(
+                ajax_url,
+                data=dl_fetch_payload,
+                headers=ajax_headers,
+                timeout=REQUEST_TIMEOUT
+            )
+            r.raise_for_status()
+            json_data = r.json()
+
+            html_chunk = json_data.get("data", {}).get("html", "")
+            if not html_chunk:
+                return []
+
+            chunk_soup = BeautifulSoup(html_chunk, "html.parser")
+            encrypt_links = chunk_soup.select("a.doo-encrypt-link")
+
+            api_index_meta: Dict[str, str] = {}
+            for item in chunk_soup.select("div.download-file-item"):
+                stream_link = item.select_one("a.doo-encrypt-link[data-type='stream'][data-api-index]")
+                if not stream_link:
+                    continue
+
+                idx = stream_link.get("data-api-index", "").strip()
+                if not idx:
+                    continue
+
+                badges = [badge.get_text(strip=True) for badge in item.select(".download-file-meta .download-badge")]
+                resolution = next((b for b in badges if re.search(r"\d{3,4}p", b, re.IGNORECASE)), "")
+                codec = next((b for b in badges if b.lower() in {"x264", "x265", "h264", "h265", "hevc", "av1"}), "")
+                source = next((b for b in badges if b.upper() in {"WEB-DL", "WEBRIP", "BLURAY", "HDRIP", "DVDRIP"}), "")
+
+                quality_label = ""
+                if resolution:
+                    inner = " ".join(part for part in [codec, source] if part)
+                    quality_label = f"{resolution} ({inner})" if inner else resolution
+                elif codec or source:
+                    quality_label = " ".join(part for part in [codec, source] if part)
+
+                if quality_label:
+                    api_index_meta[idx] = quality_label
+
             results = []
-            for option in player_options:
-                data_post = option.get('data-post')
-                data_type = option.get('data-type')
-                data_nume = option.get('data-nume')
+            seen_urls = set()
 
-                post_data = {
-                "action": "doo_player_ajax",
-                "post": data_post,
-                "nume": data_nume,
-                "type": data_type
-                }
-                ajax_url = "https://hindianimeverse.org/wp-admin/admin-ajax.php"
+            for link in encrypt_links:
+                if link.get("data-source", "").strip().lower() != "api":
+                    continue
 
-                r = requests.post(ajax_url, data=post_data)
-                if r.status_code == 200:
-                    json_data = r.json()
-                    embed_url = json_data.get('embed_url')
-                    if embed_url:
+                if link.get("data-type", "").strip().lower() != "stream":
+                    continue
+
+                api_index = link.get("data-api-index", "").strip()
+                link_post_id = link.get("data-post", "").strip() or post_id
+                fallback_url = link.get("data-url", "").strip()
+
+                if not api_index:
+                    if fallback_url and fallback_url not in seen_urls:
+                        seen_urls.add(fallback_url)
                         results.append({
-                                "Provider Host": urlparse(embed_url).netloc,
-                                "Url": embed_url
-                            })
+                            "Provider": get_provider_name(fallback_url),
+                            "Url": fallback_url
+                        })
+                    continue
+
+                doo_get_link_payload = {
+                    "action": "doo_get_link",
+                    "post_id": link_post_id,
+                    "type": "stream",
+                    "source": "api",
+                    "api_index": api_index
+                }
+
+                resolved_url = ""
+                try:
+                    r2 = self.session.post(
+                        ajax_url,
+                        data=doo_get_link_payload,
+                        headers=ajax_headers,
+                        timeout=REQUEST_TIMEOUT
+                    )
+                    r2.raise_for_status()
+                    json_data_2 = r2.json()
+                    resolved_url = json_data_2.get("data", {}).get("url", "").replace("\\/", "/")
+                except Exception:
+                    resolved_url = ""
+
+                final_url = resolved_url or fallback_url
+                if not final_url:
+                    continue
+
+                try:
+                    link_response = self.session.get(
+                        final_url,
+                        headers={"Referer": url, "User-Agent": self.session.headers.get("User-Agent", "Mozilla/5.0")},
+                        timeout=REQUEST_TIMEOUT
+                    )
+                    match = re.search(r"var targetUrl = '([^']+)'", link_response.text)
+                    if match:
+                        final_url = match.group(1)
+                except Exception:
+                    pass
+
+                if final_url in seen_urls:
+                    continue
+
+                seen_urls.add(final_url)
+                provider_label = get_provider_name(final_url)
+                quality_label = api_index_meta.get(api_index, "")
+                if quality_label:
+                    provider_label = f"{provider_label} - {quality_label}"
+
+                results.append({
+                    "Provider": provider_label,
+                    "Url": final_url
+                })
+
             return results
         
         except Exception as e:
@@ -339,7 +455,7 @@ class Scraper:
                     if "pixfusion.in" in src:
                         is_pixfusion = True
                         iframes.append({
-                            "Provider Host": "pixfusion.in",
+                            "Provider": "pixfusion",
                             "Referer": "https://watchanimeworld.in/",
                             "Url": src
                         })
@@ -348,7 +464,7 @@ class Scraper:
                         iframe_soup = self.fetch_page(src)
                         nested_iframe = iframe_soup.select_one("iframe[src]")
                         if nested_iframe:
-                            host = urlparse(nested_iframe["src"]).netloc
+                            host = get_provider_name(nested_iframe["src"])
                             iframes.append({"Provider Host": host, "Url": nested_iframe["src"]})
                 except Exception as e:
                     print(f"{YELLOW}Skipping iframe: {e}{RESET}")
@@ -361,21 +477,17 @@ class Scraper:
     def get_episode_data(self, url: str) -> Optional[Dict]:
 
         try:
-            if "tamiltoon" in url:
-                details = self.scrape_generic(url)
-                title = self.extract_title(url, " - TamilToon")
             if "animedekho" in url:
                 details = self.extract_animedekho_details(url)
                 title = self.extract_title(url, " - AnimeDekho")
             elif "hindisubanime" in url:
                 details = self.extract_hindisubanime_details(url)
                 title = self.extract_title(url, " - Hindi Sub Anime")
-            elif "anitown4u" in url:
-                details = self.extract_anime4u_details(url)
-                title = self.extract_title(url, " – AniTown4U")
             elif "hindianimeverse" in url:
                 details = self.extract_hindianimeverse_details(url)
-                title = self.extract_title(url, " | Hindi Anime Verse")
+                title = self.extract_title(url, " - Hindi Anime Verse")
+                title = re.sub(r"\s*-\s*(?:or\s+)?Download\s*-\s*Hindi\s+Anime\s+Verse\s*$", "", title, flags=re.IGNORECASE)
+                title = re.sub(r"\s*-\s*Hindi\s+Anime\s+Verse\s*$", "", title, flags=re.IGNORECASE)
                 title = title.replace("Watch & Download ", "").replace(" Free", "").strip()
             elif "watchanimeworld" in url:
                 details = self.scrape_generic(url)
@@ -417,14 +529,16 @@ def validate_url(url: str) -> bool:
     
     parsed = urlparse(url)
     return all([parsed.scheme, parsed.netloc]) and any(
-        domain in parsed.netloc for domain in ["toonstream", "animedekho", "hindisubanime", "anitown4u", "hindianimeverse", "watchanimeworld", "toonshub", "tamiltoon", "hindianimeverse"]
+        domain in parsed.netloc for domain in ["toonstream", "animedekho", "hindisubanime", "hindianimeverse", "watchanimeworld", "toonshub"]
     )
 
 def generate_episode_urls(base_url: str, seasons: Dict[int, int]) -> List[Tuple[str, int, int]]:
     
     urls = []
     
-    if "toonshub" in base_url:
+    if "hindianimeverse" in base_url:
+        base_slug = re.search(r"/episodes/([^/]+)-s\d+e\d+/?$", base_url)
+    elif "toonshub" in base_url:
         base_slug = re.search(r"/episode/([^/]+)/\d+x\d+$", base_url)
     else:
         base_slug = re.search(r"(.+-\d+x)\d+$", base_url)
@@ -435,7 +549,9 @@ def generate_episode_urls(base_url: str, seasons: Dict[int, int]) -> List[Tuple[
     
     for season, episodes in seasons.items():
         for ep in range(1, episodes + 1):
-            if "toonshub" in base_url:
+            if "hindianimeverse" in base_url:
+                episode_url = f"https://hindianimeverse.org/episodes/{base_slug.group(1)}-s{season}e{ep}"
+            elif "toonshub" in base_url:
                 episode_url = f"https://links.toonshub.xyz/episode/{base_slug.group(1)}/{season}x{ep}"
             else:
                 
@@ -443,25 +559,6 @@ def generate_episode_urls(base_url: str, seasons: Dict[int, int]) -> List[Tuple[
             urls.append((episode_url, season, ep))
     
     return urls
-
-def gen_episode_urls(base_url: str, seasons: Dict[int, int]) -> List[Tuple[str, int, int]]:
-    urls = []
-    
-    match = re.match(r"(.*-episode-)\d+$", base_url)
-    if not match:
-        print(f"{RED}Invalid episode URL format{RESET}")
-        return []
-
-    base_slug = match.group(1)
-    for season, episodes in seasons.items():
-        for ep in range(1, episodes + 1):
-            episode_url = f"{base_slug}{ep}"
-            urls.append((episode_url,season, ep))
-    
-    
-    return urls
-
-
 
 def main():
     print_header()
@@ -471,7 +568,7 @@ def main():
     
     base_url = input(f"{CYAN}Enter episode 1 URL: {RESET}").strip()
     while not validate_url(base_url):
-        print(f"{RED}Invalid URL format - must be ToonStream, AniTown4u, HindiSubAnime, ToonsHub, TamilToon, WatchAnimeWorld, HindiAnimeverse or AnimeDekho{RESET}")
+        print(f"{RED}Invalid URL format - must be ToonStream, HindiSubAnime, ToonsHub, WatchAnimeWorld, HindiAnimeverse or AnimeDekho{RESET}")
         base_url = input(f"{CYAN}Enter episode 1 URL: {RESET}").strip()
 
     base_url = base_url[:-1] if base_url.endswith("/") else base_url
@@ -479,16 +576,10 @@ def main():
     seasons = {}
     while True:
         try:
-            if "anitown4u" not in base_url:
-                season = int(input(f"{CYAN}Enter season number: {RESET}"))
-            if "anitown4u" in base_url:
-                season = 1
+            season = int(input(f"{CYAN}Enter season number: {RESET}"))
             episodes = int(input(f"{CYAN}Episodes in season {season}: {RESET}"))
             seasons[season] = episodes
-            if "anitown4u" not in base_url:
-               if input(f"{CYAN}Add another season? (y/n): {RESET}").lower() != "y":
-                 break
-            else:
+            if input(f"{CYAN}Add another season? (y/n): {RESET}").lower() != "y":
                 break
         except ValueError:
             print(f"{RED}Invalid number input{RESET}")
@@ -519,10 +610,7 @@ def main():
 
     
     results = []
-    if "anitown4u" in base_url:
-        urls = gen_episode_urls(base_url, seasons)
-    else:
-        urls = generate_episode_urls(base_url, seasons)
+    urls = generate_episode_urls(base_url, seasons)
     
     total_episodes = sum(seasons.values())
     
