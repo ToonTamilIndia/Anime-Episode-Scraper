@@ -26,7 +26,7 @@ Supports optional TMDB integration for retrieving official episode titles.
 * Dependencies listed in `requirements.txt`:
 
   ```bash
-  pip install requests beautifulsoup4 tqdm colorama
+  pip install -r requirements.txt
   ```
 
 ## Usage
