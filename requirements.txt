@@ -2,3 +2,7 @@ requests
 beautifulsoup4
 tqdm
 colorama
+cloudscraper
+PyExecJS
+pycryptodome
+numpy

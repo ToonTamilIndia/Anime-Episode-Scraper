@@ -14,13 +14,27 @@ import time
 import getpass
 from typing import Dict, List, Optional, Tuple
 import shutil
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from extractors import get_link
+
+try:
+    import numpy as np
+except Exception:
+    np = None
+
+try:
+    import orjson
+except Exception:
+    orjson = None
 
 init()
 
 
-VERSION = "3.0"
+VERSION = "3.5"
 CONFIG_FILE = "config.json"
 DEFAULT_MAX_WORKERS = 5
+DEFAULT_DETAIL_WORKERS = 12
 TMDB_API_URL = "https://api.themoviedb.org/3"
 REQUEST_TIMEOUT = 15
 MAX_RETRIES = 3
@@ -29,6 +43,12 @@ RETRY_DELAY = 1
 KNOWN_PROVIDERS = {
     "short.icu": "HydraX",
     "emturbovid.com": "Omega",
+    "as-cdn21.top": "ZephyrFlicks",
+    "play.zephyrflick.top": "ZephyrFlicks",
+    "rubystm.com": "StreamRuby",
+    "streamruby.com": "StreamRuby",
+    "filemoon.to": "FileMoon",
+    "bysefujedu.com": "FileMoon"
     
 }
 
@@ -38,6 +58,23 @@ YELLOW = Fore.YELLOW
 RED = Fore.RED
 CYAN = Fore.CYAN
 RESET = Style.RESET_ALL
+
+
+def _json_load_file(path: str):
+    if orjson is not None:
+        with open(path, "rb") as f:
+            return orjson.loads(f.read())
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _json_dump_file(path: str, data: Dict):
+    if orjson is not None:
+        with open(path, "wb") as f:
+            f.write(orjson.dumps(data, option=orjson.OPT_INDENT_2))
+        return
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 def print_header():
     width = shutil.get_terminal_size((80, 20)).columns
@@ -96,6 +133,17 @@ class TMDBClient:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.session = requests.Session()
+        retry_cfg = Retry(
+            total=3,
+            connect=3,
+            read=3,
+            backoff_factor=0.3,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET", "POST"]
+        )
+        adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=retry_cfg)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
         self.session.headers.update({
             "Authorization": f"Bearer {api_key}",
             "accept": "application/json"
@@ -134,6 +182,17 @@ class Scraper:
     
     def __init__(self):
         self.session = requests.Session()
+        retry_cfg = Retry(
+            total=3,
+            connect=3,
+            read=3,
+            backoff_factor=0.3,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET", "POST"]
+        )
+        adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100, max_retries=retry_cfg)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; rv:122.0) Gecko/20100101 Firefox/122.0"
         })
@@ -163,32 +222,39 @@ class Scraper:
 
             term = match.group(1)
             results = []
-            
- 
-            for i in range(11):
-                try:
-                    dynamic_url = f"https://animedekho.app/?trdekho={i}&trid={term}&trtype=2"
-                    iframe_soup = self.fetch_page(dynamic_url)
-                    if iframe := iframe_soup.select_one("iframe[src]"):
+
+            dynamic_urls = [f"https://animedekho.app/?trdekho={i}&trid={term}&trtype=2" for i in range(11)]
+            workers = min(len(dynamic_urls), DEFAULT_DETAIL_WORKERS)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [executor.submit(self.fetch_page, u) for u in dynamic_urls]
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        iframe_soup = future.result()
+                        if not iframe_soup:
+                            continue
+                        iframe = iframe_soup.select_one("iframe[src]")
+                        if not iframe:
+                            continue
                         src = iframe["src"]
-                        if src!="":
-                            if src.startswith("https://animedekho.app/aaa/ad/vidsrc"):
-                                results.append({
-                                "Provider Host": "VidSrc",
+                        if src == "":
+                            continue
+                        if src.startswith("https://animedekho.app/aaa/ad/vidsrc"):
+                            results.append({
+                                "Provider": "VidSrc",
                                 "Url": src
                             })
-                            elif src.startswith("https://animedekho.app/aaa/ad/beta"):
-                                 results.append({
-                                "Provider Host": "BETA",
+                        elif src.startswith("https://animedekho.app/aaa/ad/beta"):
+                            results.append({
+                                "Provider": "BETA",
                                 "Url": src
                             })
-                            else:
-                                results.append({
-                                    "Provider": get_provider_name(src),
-                                    "Url": src
-                                })
-                except Exception as e:
-                    continue
+                        else:
+                            results.append({
+                                "Provider": get_provider_name(src),
+                                "Url": src
+                            })
+                    except Exception:
+                        continue
 
             return results
         except Exception as e:
@@ -210,21 +276,28 @@ class Scraper:
 
             term = match.group(1)
             results = []
-            
- 
-            for i in range(11):
-                try:
-                    dynamic_url = f"https://hindisubanime.co/?trdekho={i}&trid={term}&trtype=2"
-                    iframe_soup = self.fetch_page(dynamic_url)
-                    if iframe := iframe_soup.select_one("iframe[src]"):
+
+            dynamic_urls = [f"https://hindisubanime.co/?trdekho={i}&trid={term}&trtype=2" for i in range(11)]
+            workers = min(len(dynamic_urls), DEFAULT_DETAIL_WORKERS)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [executor.submit(self.fetch_page, u) for u in dynamic_urls]
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        iframe_soup = future.result()
+                        if not iframe_soup:
+                            continue
+                        iframe = iframe_soup.select_one("iframe[src]")
+                        if not iframe:
+                            continue
                         src = iframe["src"]
-                        if src!="":
-                            results.append({
-                                "Provider": get_provider_name(src),
-                                "Url": src
-                            })
-                except Exception as e:
-                    continue
+                        if src == "":
+                            continue
+                        results.append({
+                            "Provider": get_provider_name(src),
+                            "Url": src
+                        })
+                    except Exception:
+                        continue
 
             return results
         except Exception as e:
@@ -430,10 +503,9 @@ class Scraper:
 
 
                 result.append({
-                    resolution: {
-                        "Provider": provider_name,
-                        "Url": "https://links.toonshub.xyz" + href
-                    }
+                    "Provider": provider_name,
+                    "Url": "https://links.toonshub.xyz" + href,
+                    "Resolution": resolution
                 })
 
         return result
@@ -450,6 +522,16 @@ class Scraper:
                 try:
                     src = iframe["data-src"]
 
+                    streaming_links = self.add_streaming_links([{"Url": src}])[0].get("Streaming Links", "")
+
+                    if streaming_links:
+                        iframes.append({
+                            "Provider": get_provider_name(src),
+                            "Url": src,
+                            "Streaming Links": streaming_links
+                        })
+                        continue
+
                     is_pixfusion = False
                     
                     if "pixfusion.in" in src:
@@ -457,7 +539,8 @@ class Scraper:
                         iframes.append({
                             "Provider": "pixfusion",
                             "Referer": "https://watchanimeworld.in/",
-                            "Url": src
+                            "Url": src,
+                            "Streaming Links": ""
                         })
                     
                     if not is_pixfusion:
@@ -465,7 +548,11 @@ class Scraper:
                         nested_iframe = iframe_soup.select_one("iframe[src]")
                         if nested_iframe:
                             host = get_provider_name(nested_iframe["src"])
-                            iframes.append({"Provider Host": host, "Url": nested_iframe["src"]})
+                            iframes.append({
+                                "Provider": host,
+                                "Url": nested_iframe["src"],
+                                "Streaming Links": ""
+                            })
                 except Exception as e:
                     print(f"{YELLOW}Skipping iframe: {e}{RESET}")
 
@@ -473,6 +560,34 @@ class Scraper:
         except Exception as e:
             print(f"{RED}Generic scrape error: {e}{RESET}")
             return []
+
+    def add_streaming_links(self, details: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        detail_items = details or []
+        if not detail_items:
+            return []
+
+        def _resolve_item(item):
+            if not isinstance(item, dict):
+                return item
+
+            entry = dict(item)
+            target_url = entry.get("Url")
+            existing_streaming = entry.get("Streaming Links")
+
+            if existing_streaming:
+                entry["Streaming Links"] = existing_streaming
+                return entry
+
+            link_data = get_link(target_url) if target_url else ""
+            entry["Streaming Links"] = link_data or ""
+            return entry
+
+        workers = min(DEFAULT_DETAIL_WORKERS, len(detail_items))
+        if workers <= 1:
+            return [_resolve_item(item) for item in detail_items]
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            return list(executor.map(_resolve_item, detail_items))
 
     def get_episode_data(self, url: str) -> Optional[Dict]:
 
@@ -499,6 +614,8 @@ class Scraper:
                 details = self.scrape_generic(url)
                 title = self.extract_title(url, " - Toonstream")
 
+            details = self.add_streaming_links(details)
+
             return {"Title": title, "Details": details} if details else None
         except Exception as e:
             print(f"{RED}Scrape failed for {url}: {e}{RESET}")
@@ -514,16 +631,14 @@ def load_config() -> Dict:
     
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
+            return _json_load_file(CONFIG_FILE)
         except json.JSONDecodeError:
             print(f"{YELLOW}Invalid config file, using defaults{RESET}")
     return {}
 
 def save_config(config: Dict):
     
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=2)
+    _json_dump_file(CONFIG_FILE, config)
 
 def validate_url(url: str) -> bool:
     
@@ -548,7 +663,8 @@ def generate_episode_urls(base_url: str, seasons: Dict[int, int]) -> List[Tuple[
 
     
     for season, episodes in seasons.items():
-        for ep in range(1, episodes + 1):
+        ep_iter = np.arange(1, episodes + 1, dtype=np.int32).tolist() if np is not None else range(1, episodes + 1)
+        for ep in ep_iter:
             if "hindianimeverse" in base_url:
                 episode_url = f"https://hindianimeverse.org/episodes/{base_slug.group(1)}-s{season}e{ep}"
             elif "toonshub" in base_url:
@@ -674,8 +790,7 @@ def main():
         "episodes": results
     }
 
-    with open(output_file, "w") as f:
-        json.dump(output_data, f, indent=2, ensure_ascii=False)
+    _json_dump_file(output_file, output_data)
 
     print(f"\n{GREEN}Successfully saved {len(results)} episodes to {output_file}{RESET}")
 

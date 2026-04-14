@@ -16,6 +16,7 @@ Supports optional TMDB integration for retrieving official episode titles.
 * Multi-source scraping from major Indian anime streaming sites
 * Automatic extraction of streaming links
 * Concurrent scraping for faster performance
+* Enhanced extractor engine for direct streams, decryption, and subtitles across multiple hosts
 * TMDB integration to fetch official episode names
 * JSON output with metadata
 * Configurable via a simple JSON file
@@ -57,7 +58,7 @@ python main.py
   "metadata": {
     "source": "https://example.com",
     "scraped_at": "2025-05-22 12:00:00 UTC",
-    "script_version": "3.0",
+    "script_version": "3.5",
     "total_episodes": 12,
     "seasons": {
       "1": 12
@@ -70,8 +71,20 @@ python main.py
       "Title": "Episode 1 Title",
       "Details": [
         {
-          "Provider Host": "provider.com",
-          "Url": "https://provider.com/stream"
+          "Provider": "StreamRuby",
+          "Url": "https://streamruby.com/e/abcd1234",
+          "Streaming Links": {
+            "source": "https://cdn.example.com/master.m3u8",
+            "referer": "https://streamruby.com/",
+            "requiresReferer": false,
+            "subtitles": [
+              {
+                "label": "English",
+                "file": "https://cdn.example.com/subs/en.vtt",
+                "kind": "captions"
+              }
+            ]
+          }
         }
       ],
       "TMDB Name": "TMDB Episode Title"
@@ -83,7 +96,6 @@ python main.py
 ## Notes
 
 * TMDB integration is optional but recommended for better episode labeling.
-* Some sources like AniTown4u have fixed season structure (season 1 only).
 
 ## License
 
@@ -92,4 +104,4 @@ MIT License
 ---
 
 **Author:** \[ToonTamilIndia]
-**Version:** 3.0
+**Version:** 3.5
